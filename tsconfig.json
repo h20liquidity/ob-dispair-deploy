@@ -1,0 +1,11 @@
+{
+    "include": ["./test", "./utils", "./scripts", "./deployment"],
+    "exclude": ["node_modules/*"],
+    "compilerOptions": {
+      "target": "ES2020",
+      "esModuleInterop": true,
+      "moduleResolution": "node",
+      "resolveJsonModule": true
+    }
+  }
+  
