@@ -2,12 +2,12 @@
 import * as path from "path";
 import { argv } from "process";
 import * as dotenv from "dotenv";
-import { deployContractToNetwork, getCommons, getProvider, getTransactionData, getTransactionDataForNetwork } from "../utils";
-import { delay, verify } from "../verify";
-import { deployInterpreter } from "../DISpair/deployInterpreter";
-import { deployStore } from "../DISpair/deployStore";
-import { deployExpressionDeployer } from "../DISpair/deployExpressionDeployer";
-import { deployOrderBook } from "../DISpair/deployOrderbook";
+import { deployContractToNetwork, getCommons, getProvider, getTransactionData, getTransactionDataForNetwork } from "./utils";
+import { delay, verify } from "./verify";
+import { deployInterpreter } from "./DISpair/deployInterpreter";
+import { deployStore } from "./DISpair/deployStore";
+import { deployExpressionDeployer } from "./DISpair/deployExpressionDeployer";
+import { deployOrderBook } from "./DISpair/deployOrderbook";
 dotenv.config();
 
 
@@ -28,23 +28,19 @@ async function main() {
       Deploy contracts
 
         --from, -f <network name>
-          Name of the network to deploy from. Any of ["snowtrace","goerli","mumbai","sepolia","polygon"]
+          Name of the network to deploy from. Any of ["mumbai","sepolia","polygon","ethereum"]
 
         --to, -t <network name>
-          Name of the network to deploy the contract. Any of ["snowtrace",goerli","mumbai","sepolia","polygon"]
-
-        --counterparty, -c <address>
-          Counterparty address for strategy.
+          Name of the network to deploy the contract. Any of ["mumbai","sepolia","polygon","ethereum"]
       `
     );
   }else{ 
     let fromNetwork 
-    let toNetwork  
-    let counterparty 
+    let toNetwork
 
 
     //valid networks
-    const validNetworks = ["goerli","snowtrace","mumbai","sepolia","polygon"]
+    const validNetworks = ["mumbai","sepolia","polygon","ethereum"]
 
 
     if (
@@ -75,20 +71,6 @@ async function main() {
       toNetwork = _tmp[1]
     }   
 
-    if (
-      args.includes("--counterparty") ||
-      args.includes("-c")
-    ) {
-      const _i =
-        args.indexOf("--counterparty") > -1
-          ? args.indexOf("--counterparty")
-          : args.indexOf("-c")
-      const _tmp = args.splice(_i, _i + 2);
-      if (_tmp.length != 2) throw new Error("expected counterparty");
-      counterparty = _tmp[1]
-    }
-    
-   
     await deployInterpreter(fromNetwork,toNetwork)  
 
     await deployStore(fromNetwork,toNetwork)  

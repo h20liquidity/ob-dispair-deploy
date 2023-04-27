@@ -23,9 +23,8 @@ import { publicProvider } from "@sonicswap/wagmi-core/providers/public";
 import contractConfig from "../../config/config.json"
 
 import axios from "axios";
-import { standardEvaluableConfig } from "../../utils/interpreter/interpreter";
 import { hexlify } from "ethers/lib/utils";
-import { getEventArgs } from "../../utils";
+
 
 /*
 * Get etherscan key
@@ -39,7 +38,7 @@ export const getEtherscanKey = (network:string) => {
     key = ''
   }else if(network === "snowtrace"){
     key = ''
-  }else if(network === "sepolia"){
+  }else if(network === "sepolia" || network === "ethereum"){
     key = process.env.ETHERSCAN_API_KEY
   }else if(network === "hardhat"){
     key = ''
@@ -65,6 +64,8 @@ export const getEtherscanBaseURL = (network:string) => {
     url = 'https://api.polygonscan.com/api'
   }else if(network === "hardhat"){
     url = ''
+  }else if(network === "ethereum"){
+    url = 'https://api.etherscan.io/api'
   }
   return url
 }  
@@ -90,7 +91,8 @@ export const getProvider = (network:string) => {
       provider = new ethers.providers.AlchemyProvider("matic",`${process.env.ALCHEMY_KEY_POLYGON}`)   
     }else if(network === "hardhat"){
       provider = new ethers.providers.JsonRpcProvider('http://127.0.0.1:8545') 
-      
+    }else if(network === "ethereum"){ 
+      provider = new ethers.providers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_KEY_ETHEREUM}`) 
     }
     return provider
 } 
@@ -112,7 +114,8 @@ export const getCommons = (network:string) => {
       common = Common.custom(CustomChain.PolygonMainnet) 
     }else if(network === "hardhat"){
       common = Common.custom({ chainId: 31337 })
-
+    }else if(network === "ethereum"){
+      common = new Common({ chain: Chain.Mainnet, hardfork: Hardfork.London })
     }
     
     return common
@@ -170,8 +173,6 @@ export const getTransactionDataForNetwork =  (txData:string,fromNetwork:string,t
   const fromNetworkConfig = contractConfig.contracts[fromNetwork]
   const toNetworkConfig = contractConfig.contracts[toNetwork]  
 
-  // let contract = await hre.ethers.getContractAt('Rainterpreter',fromNetworkConfig["interpreter"]["address"]) 
-  // console.log("contract : " , contract )
 
   if(txData.includes(fromNetworkConfig["interpreter"]["address"].split('x')[1].toLowerCase())){ 
     txData = txData.replace(fromNetworkConfig["interpreter"]["address"].split('x')[1].toLowerCase(), toNetworkConfig["interpreter"]["address"].split('x')[1].toLowerCase())
@@ -197,7 +198,7 @@ export const estimateFeeData = async (
   gasPrice: BigNumber;
   maxFeePerGas: BigNumber;
   maxPriorityFeePerGas: BigNumber;
-}> => {
+}> => { 
   if (chainProvider._network.chainId === 137) {  
     const gasDataForPolygon = await getGasDataForPolygon()
     return {
@@ -226,9 +227,17 @@ export const estimateFeeData = async (
       maxPriorityFeePerGas: feeData["maxPriorityFeePerGas"],
       maxFeePerGas: feeData["maxFeePerGas"],
     }
-  } else {
-    const chain = allChains.find((chain) => chain.id === chainProvider._network.chainId); 
+  }else if(chainProvider._network.chainId === 1 ){ 
+    const feeData = await chainProvider.getFeeData(); 
+    
+    return {
+      gasPrice: feeData["gasPrice"],
+      maxPriorityFeePerGas: feeData["maxPriorityFeePerGas"],
+      maxFeePerGas: feeData["maxFeePerGas"],
+    }
 
+  } else { 
+    const chain = allChains.find((chain) => chain.id === chainProvider._network.chainId); 
     const { provider, webSocketProvider } = configureChains(
       [chain],
       [publicProvider()]
@@ -246,7 +255,8 @@ export const estimateFeeData = async (
       gasPrice,
       maxFeePerGas,
       maxPriorityFeePerGas,
-    };
+    }; 
+
   }
 };
  
@@ -273,11 +283,13 @@ export const encodeMeta = (data: string) => {
 */
 export const deployContractToNetwork = async (provider: any, common: Common,  priKey: string, transactionData: string) => { 
 
-    console.log("Deploying Contract...")
-  
+    console.log("Deploying Contract...") 
+
     const signer  = new ethers.Wallet(priKey,provider)   
 
-    const nonce = await provider.getTransactionCount(signer.address)   
+    const nonce = await provider.getTransactionCount(signer.address)  
+    
+    const feeData = await estimateFeeData(provider)   
 
 
     // An estimate may not be accurate since there could be another transaction on the network that was not accounted for,
@@ -286,10 +298,7 @@ export const deployContractToNetwork = async (provider: any, common: Common,  pr
     const gasLimit = await provider.estimateGas({
       data: transactionData
     }) 
-
-
-    const feeData = await estimateFeeData(provider)  
-    
+ 
   
     // hard conded values to be calculated
     const txData = { 
@@ -322,669 +331,13 @@ export const deployContractToNetwork = async (provider: any, common: Common,  pr
   }   
 
 
-export const decodeAddOrderEventsArgs = async(transaction,orderBook) => {  
-
-  const eventObj = (await transaction.wait()).logs.find(
-    (x) =>{  
-      return (x.topics[0] == "0x73e46afa6205785bdaa1daaf8b6ccc71715ec06b3b4264f5a00fde98671c2fc6") // Checking for Add Order Event 
-    }
-      
-  ); 
-
-
-  if (!eventObj) {
-    console.log(`Could not find event data!!!`);
-  }
-
-  let eventData = orderBook.interface.decodeEventLog(
-    "AddOrder",
-    eventObj.data,
-    eventObj.topics
-  );  
-  
-  let order = eventData.order 
-
-  let orderValidInputs = order.validInputs.map(e => { 
-    return {
-      token:e.token,
-      decimals:e.decimals,
-      vaultId:e.vaultId._hex
-    }
-  }) 
-
-  let orderValidOutputs = order.validOutputs.map(e => {
-    return {
-      token:e.token,
-      decimals:e.decimals,
-      vaultId:e.vaultId._hex
-    }
-  })
-
-  const orderDetailsObject = [{
-    owner : order.owner ,
-    handleIO: order.handleIO ,
-    evaluable: {
-      interpreter: order.evaluable.interpreter,
-      store: order.evaluable.store ,
-      expression: order.evaluable.expression
-    },
-    validInputs : orderValidInputs , 
-    validOutputs: orderValidOutputs
-  } 
-  ]
-
-  
-
-  let data = JSON.stringify(orderDetailsObject,null,2) 
-
-  writeFileSync('./scripts/DeployStrategy/orderDetails.json', data)  
-
  
 
 
-} 
-
-export const decodeCloneEvent = async(transaction,cloneFactory) => {  
-
-  const eventObj = (await transaction.wait()).logs.find(
-    (x) =>{  
-      return (x.topics[0] == "0x274b5f356634f32a865af65bdc3d8205939d9413d75e1f367652e4f3b24d0c3a") // Checking for New Clone Event 
-    }
-      
-  ); 
-
-  if (!eventObj) {
-    console.log(`Could not find event data!!!`);
-  }
-
-  let eventData = cloneFactory.interface.decodeEventLog(
-    "NewClone",
-    eventObj.data,
-    eventObj.topics
-  );    
-
-  const cloneObject = {
-    sender : eventData.sender ,
-    implementation: eventData.implementation ,
-    clone : eventData.clone ,
-  }
-
-  return cloneObject
-
-} 
 
  
 
-
-export const deployStrategy = async(network:string,priKey: string, common: Common,ratio:string) => {   
-
-  console.log("Deploying Strategy...") 
-
-  if(!ratio) return null
-    
-  //Get Provider for testnet from where the data is to be fetched 
-  const provider = getProvider(network)   
-  
-  const vaultId = ethers.BigNumber.from(randomUint256());
-
-  const signer  = new ethers.Wallet(priKey,provider) 
  
-  //Get Source code from contract
-  // const url = `${getEtherscanBaseURL(network)}?module=contract&action=getsourcecode&address=${contractConfig[network].orderbook.address}&apikey=${getEtherscanKey(network)}`;
-  // const source = await axios.get(url);    
-
-  // Get Orderbook Instance
-  const orderBook = new ethers.Contract(contractConfig.contracts[network].orderbook.address,orderBookDetails.abi,signer) 
-
-  //Building Expression
-  const strategyExpression = path.resolve(
-      __dirname,
-      "../../src/0-pilot.rain"
-    ); 
-
-  const strategyString = await fetchFile(strategyExpression);  
-
-  const arbCounterParty = contractConfig.contracts[network].zeroexorderbookinstance.address 
-  console.log("arbCounterParty: ",arbCounterParty)
-
-  const stringExpression = mustache.render(strategyString, {
-    counterparty: arbCounterParty,
-    ratio: ratio
-  });    
-
-  const { sources, constants } = await standardEvaluableConfig(stringExpression)  
-
-  const EvaluableConfig_A = {
-    deployer: contractConfig.contracts[network].expressionDeployer.address,
-    sources,
-    constants,
-  }
-  const orderConfig_A = {
-    validInputs: [
-      { token: contractConfig.contracts[network].usdt.address, decimals: contractConfig.contracts[network].usdt.decimals, vaultId: vaultId },
-    ],
-    validOutputs: [
-      { token: contractConfig.contracts[network].nht.address, decimals: contractConfig.contracts[network].nht.decimals, vaultId: vaultId},
-    ],
-    evaluableConfig: EvaluableConfig_A,
-    meta: encodeMeta(""),
-  };  
-
-
-  const addOrderData = await orderBook.populateTransaction.addOrder(orderConfig_A);   
-
-  // Building Tx
-  const nonce = await provider.getTransactionCount(signer.address)   
-
-
-    // An estimate may not be accurate since there could be another transaction on the network that was not accounted for,
-    // but after being mined affected relevant state.
-    // https://docs.ethers.org/v5/api/providers/provider/#Provider-estimateGas
-    const gasLimit = await provider.estimateGas({ 
-      to:contractConfig.contracts[network].orderbook.address ,
-      data: addOrderData.data
-    }) 
-
-    const feeData = await estimateFeeData(provider)  
-    
-  
-    // hard conded values to be calculated
-    const txData = {  
-      to: contractConfig.contracts[network].orderbook.address ,
-      from: signer.address, 
-      nonce: ethers.BigNumber.from(nonce).toHexString() ,
-      data : addOrderData.data ,
-      gasLimit : gasLimit.toHexString(), 
-      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas.toHexString(), 
-      maxFeePerGas: feeData.maxFeePerGas.toHexString(),
-      type: '0x02'
-    }   
-        
-    // Generate Transaction 
-    const tx = FeeMarketEIP1559Transaction.fromTxData(txData, { common })   
-  
-    const privateKey = Buffer.from(
-      priKey,
-      'hex'
-    ) 
-    
-    // Sign Transaction 
-    const signedTx = tx.sign(privateKey)
-  
-    // Send the transaction
-    const contractTransaction = await provider.sendTransaction(
-      "0x" + signedTx.serialize().toString("hex")
-    );     
-
-    await decodeAddOrderEventsArgs(contractTransaction,orderBook)
-    return contractTransaction
-
-    
-
-
-}  
-
-export const approveDepositToken = async(tokenContract, spender, amount, signer, provider, common , priKey) => {  
-  
-    console.log("Approving Tokens For Deposit.....")   
-    
-    const balance = await tokenContract.balanceOf(signer.address) 
-
-    if( amount.gt(balance) ){
-      console.log(`Not Enough balance, please make sure to have enough balance`)
-      return null
-    }
-
-    const approveData = await tokenContract.populateTransaction.approve(spender.toLowerCase(), amount.toString());  
-
-    // Building Tx
-    const nonce = await provider.getTransactionCount(signer.address)   
-
-    // An estimate may not be accurate since there could be another transaction on the network that was not accounted for,
-    // but after being mined affected relevant state.
-    // https://docs.ethers.org/v5/api/providers/provider/#Provider-estimateGas
-    const gasLimit = await provider.estimateGas({ 
-      to: approveData.to.toLowerCase() ,
-      from : approveData.from.toLowerCase(),
-      data: approveData.data
-    }) 
-
-    const feeData = await estimateFeeData(provider)  
-    
-  
-    // hard conded values to be calculated
-    const txData = {  
-      to: tokenContract.address.toLowerCase() ,
-      from: signer.address, 
-      nonce: ethers.BigNumber.from(nonce).toHexString() ,
-      data : approveData.data ,
-      gasLimit : gasLimit.toHexString(), 
-      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas.toHexString(), 
-      maxFeePerGas: feeData.maxFeePerGas.toHexString(),
-      type: '0x02'
-    }   
-        
-    // Generate Transaction 
-    const tx = FeeMarketEIP1559Transaction.fromTxData(txData, { common })   
-  
-    const privateKey = Buffer.from(
-      priKey,
-      'hex'
-    ) 
-    
-    // Sign Transaction 
-    const signedTx = tx.sign(privateKey)
-  
-    // Send the transaction
-    const contractTransaction = await provider.sendTransaction(
-      "0x" + signedTx.serialize().toString("hex")
-    );      
-
-    return contractTransaction
-
-}
-
-export const depositNHTTokens = async(network:string,priKey: string, common: Common,amount:string) => {  
- 
-    if(orderDetails[0].validOutputs){   
-
-      const outputTokenVault = orderDetails[0].validOutputs[0]  
-
-      const depositToken = outputTokenVault.token
-      const depositAmount = ethers.utils.parseUnits(amount , outputTokenVault.decimals )
-      const vaultId = ethers.BigNumber.from(outputTokenVault.vaultId)
-
-    
-      //Get Provider for testnet from where the data is to be fetched 
-      const provider = getProvider(network)  
-      
-      const signer = new ethers.Wallet(priKey,provider)   
-
-      const tokenContract = new ethers.Contract(depositToken,abi,signer)  
-
-     
-      const approveTx = await approveDepositToken(tokenContract, contractConfig.contracts[network].orderbook.address, depositAmount, signer, provider, common , priKey) 
-
-      const approveReceipt = await approveTx.wait()  
-
-  
-      if(approveReceipt.transactionHash){   
-
-        console.log("Tokens Approved")
-        console.log("Depositing Tokens...")   
-
-         // Get Orderbook Instance
-        const orderBook = new ethers.Contract(contractConfig.contracts[network].orderbook.address,orderBookDetails.abi,signer)  
-
-        const depositConfigStruct = {
-          token: depositToken ,
-          vaultId: vaultId ,
-          amount: depositAmount,
-        }; 
-
-        const depositData = await orderBook.populateTransaction.deposit(depositConfigStruct);   
-
-        // Building Tx
-        const nonce = await provider.getTransactionCount(signer.address)   
-
-
-          // An estimate may not be accurate since there could be another transaction on the network that was not accounted for,
-          // but after being mined affected relevant state.
-          // https://docs.ethers.org/v5/api/providers/provider/#Provider-estimateGas
-          const gasLimit = await provider.estimateGas({ 
-            to:depositData.to.toLowerCase() , 
-            from:depositData.from.toLowerCase() , 
-            data: depositData.data
-          }) 
-
-          const feeData = await estimateFeeData(provider)  
-          
-        
-          // hard conded values to be calculated
-          const txData = {  
-            to: contractConfig.contracts[network].orderbook.address ,
-            from: signer.address, 
-            nonce: ethers.BigNumber.from(nonce).toHexString() ,
-            data : depositData.data ,
-            gasLimit : gasLimit.toHexString(), 
-            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas.toHexString(), 
-            maxFeePerGas: feeData.maxFeePerGas.toHexString(),
-            type: '0x02'
-          }   
-              
-          // Generate Transaction 
-          const tx = FeeMarketEIP1559Transaction.fromTxData(txData, { common })   
-        
-          const privateKey = Buffer.from(
-            priKey,
-            'hex'
-          ) 
-          
-          // Sign Transaction 
-          const signedTx = tx.sign(privateKey)
-        
-          // Send the transaction
-          const contractTransaction = await provider.sendTransaction(
-            "0x" + signedTx.serialize().toString("hex")
-          );     
-
-          return contractTransaction
-
-      }else{
-      console.log("Token Approval failed")
-      }
-
-     
- 
-
-    }else{
-      console.log("Order Details Not Found")
-    }
-
-    
-
-
-}  
-
-export const withdrawNHTTokens = async(network:string,priKey: string, common: Common,amount:string) => { 
-
-  if(orderDetails[0].validOutputs){  
-
-    const outputTokenVault = orderDetails[0].validOutputs[0]  
-
-      const withdrawToken = outputTokenVault.token
-      const withdrawAmount = ethers.utils.parseUnits(amount , outputTokenVault.decimals )
-      const vaultId = ethers.BigNumber.from(outputTokenVault.vaultId) 
-
-      //Get Provider for testnet from where the data is to be fetched 
-      const provider = getProvider(network)  
-      
-      const signer = new ethers.Wallet(priKey,provider)   
-
-      const tokenContract = new ethers.Contract(withdrawToken,abi,signer)  
-
-      // Get Orderbook Instance
-      const orderBook = new ethers.Contract(contractConfig.contracts[network].orderbook.address,orderBookDetails.abi,signer)   
-
-      const balance = await orderBook.vaultBalance(
-        signer.address ,
-        withdrawToken ,
-        vaultId
-      )   
-
-      if(withdrawAmount.gt(balance)){
-        console.log(`Cannot withdraw more than balance. Your current balance is ${ethers.utils.formatUnits(balance.toString(), outputTokenVault.decimals)} NHT`) 
-        return null
-      }
-     
-      const withdrawConfigStruct = {
-        token: withdrawToken ,
-        vaultId: vaultId ,
-        amount: withdrawAmount,
-      }; 
-
-      const withdrawData = await orderBook.populateTransaction.withdraw(withdrawConfigStruct);   
-
-      // Building Tx
-      const nonce = await provider.getTransactionCount(signer.address)   
-
-
-      // An estimate may not be accurate since there could be another transaction on the network that was not accounted for,
-      // but after being mined affected relevant state.
-      // https://docs.ethers.org/v5/api/providers/provider/#Provider-estimateGas
-      const gasLimit = await provider.estimateGas({ 
-        to:withdrawData.to.toLowerCase() , 
-        from:withdrawData.from.toLowerCase() , 
-        data: withdrawData.data
-      }) 
-
-      const feeData = await estimateFeeData(provider)  
-      
-    
-      // hard conded values to be calculated
-      const txData = {  
-        to: contractConfig.contracts[network].orderbook.address ,
-        from: signer.address, 
-        nonce: ethers.BigNumber.from(nonce).toHexString() ,
-        data : withdrawData.data ,
-        gasLimit : gasLimit.toHexString(), 
-        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas.toHexString(), 
-        maxFeePerGas: feeData.maxFeePerGas.toHexString(),
-        type: '0x02'
-      }   
-          
-      // Generate Transaction 
-      const tx = FeeMarketEIP1559Transaction.fromTxData(txData, { common })   
-    
-      const privateKey = Buffer.from(
-        priKey,
-        'hex'
-      ) 
-      
-      // Sign Transaction 
-      const signedTx = tx.sign(privateKey)
-    
-      // Send the transaction
-      const contractTransaction = await provider.sendTransaction(
-        "0x" + signedTx.serialize().toString("hex")
-      );     
-
-      return contractTransaction
-
-
-
-
-   }
-
-} 
-
-export const withdrawUSDTTokens = async(network:string,priKey: string, common: Common,amount:string) => { 
-
-  if(orderDetails[0].validInputs){  
-
-    const inputTokenVault = orderDetails[0].validInputs[0]  
-
-      const withdrawToken = inputTokenVault.token
-      const withdrawAmount = ethers.utils.parseUnits(amount , inputTokenVault.decimals )
-      const vaultId = ethers.BigNumber.from(inputTokenVault.vaultId)  
-
-      //Get Provider for testnet from where the data is to be fetched 
-      const provider = getProvider(network)  
-      
-      const signer = new ethers.Wallet(priKey,provider)   
-
-      const tokenContract = new ethers.Contract(withdrawToken,abi,signer)  
-
-      // Get Orderbook Instance
-      const orderBook = new ethers.Contract(contractConfig.contracts[network].orderbook.address,orderBookDetails.abi,signer)   
-
-      const balance = await orderBook.vaultBalance(
-        signer.address ,
-        withdrawToken ,
-        vaultId
-      )   
-
-
-      if(withdrawAmount.gt(balance)){
-        console.log(`Cannot withdraw more than balance. Your current balance is ${ethers.utils.formatUnits(balance.toString(), inputTokenVault.decimals)} USDT`) 
-        return null
-      }
-     
-      const withdrawConfigStruct = {
-        token: withdrawToken ,
-        vaultId: vaultId ,
-        amount: withdrawAmount,
-      }; 
-
-      const withdrawData = await orderBook.populateTransaction.withdraw(withdrawConfigStruct);   
-
-      // Building Tx
-      const nonce = await provider.getTransactionCount(signer.address)   
-
-
-      // An estimate may not be accurate since there could be another transaction on the network that was not accounted for,
-      // but after being mined affected relevant state.
-      // https://docs.ethers.org/v5/api/providers/provider/#Provider-estimateGas
-      const gasLimit = await provider.estimateGas({ 
-        to:withdrawData.to.toLowerCase() , 
-        from:withdrawData.from.toLowerCase() , 
-        data: withdrawData.data
-      }) 
-
-      const feeData = await estimateFeeData(provider)  
-      
-    
-      // hard conded values to be calculated
-      const txData = {  
-        to: contractConfig.contracts[network].orderbook.address ,
-        from: signer.address, 
-        nonce: ethers.BigNumber.from(nonce).toHexString() ,
-        data : withdrawData.data ,
-        gasLimit : gasLimit.toHexString(), 
-        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas.toHexString(), 
-        maxFeePerGas: feeData.maxFeePerGas.toHexString(),
-        type: '0x02'
-      }   
-          
-      // Generate Transaction 
-      const tx = FeeMarketEIP1559Transaction.fromTxData(txData, { common })   
-    
-      const privateKey = Buffer.from(
-        priKey,
-        'hex'
-      ) 
-      
-      // Sign Transaction 
-      const signedTx = tx.sign(privateKey)
-    
-      // Send the transaction
-      const contractTransaction = await provider.sendTransaction(
-        "0x" + signedTx.serialize().toString("hex")
-      );     
-
-      return contractTransaction
-
-
-
-
-   }
-
-}
-
-
-export const deployArbContractInstance = async (provider: any, common: Common,  priKey: string, network: string, counterparty: string) => { 
-
-  console.log("Deploying Arb Instance...")
-
-  const signer  = new ethers.Wallet(priKey,provider)   
-
-  const nonce = await provider.getTransactionCount(signer.address)    
-
-  const arbExp = path.resolve(
-    __dirname,
-    "../../src/0-arb.rain"
-  );
-
-  const arbString = await fetchFile(arbExp); 
-
-  const arbExpression = mustache.render(arbString, {
-    counterparty: counterparty,
-  }); 
-
-  const { sources, constants } = await standardEvaluableConfig(arbExpression)  
-
-  const { exchangeProxy } = getContractAddressesForChainOrThrow(provider._network.chainId);
-  
-
-  const borrowerConfig = {
-    orderBook : contractConfig.contracts[network].orderbook.address,
-    zeroExExchangeProxy: exchangeProxy,
-    evaluableConfig: {
-      deployer: contractConfig.contracts[network].expressionDeployer.address,
-      sources,
-      constants
-    }
-
-  }
-  const encodedConfig = ethers.utils.defaultAbiCoder.encode(
-    [
-      "tuple(address orderBook,address zeroExExchangeProxy,tuple(address deployer,bytes[] sources,uint256[] constants) evaluableConfig)",
-    ],
-    [borrowerConfig]
-  ); 
- 
-
-  if(contractConfig.contracts[network].zeroexorderbookimplmentation.address){
-    const zeroExImplementation = contractConfig.contracts[network].zeroexorderbookimplmentation.address 
-    const cloneFactoryAddress = contractConfig.contracts[network].clonefactory.address  
-
-    //Get Source code from contract
-    const url = `${getEtherscanBaseURL(network)}?module=contract&action=getsourcecode&address=${cloneFactoryAddress}&apikey=${getEtherscanKey(network)}`;
-    const source = await axios.get(url);    
-
-    // Create Clone Factory Instance
-    const cloneFactory = new ethers.Contract(cloneFactoryAddress,source.data.result[0].ABI,signer)  
-
-    const cloneData = await cloneFactory.populateTransaction.clone(zeroExImplementation,encodedConfig);   
-    
-    // Building Tx
-    const nonce = await provider.getTransactionCount(signer.address)   
-
-
-    // An estimate may not be accurate since there could be another transaction on the network that was not accounted for,
-    // but after being mined affected relevant state.
-    // https://docs.ethers.org/v5/api/providers/provider/#Provider-estimateGas
-    const gasLimit = await provider.estimateGas({ 
-      to:cloneData.to ,
-      from:cloneData.from ,
-      data: cloneData.data
-    }) 
-
-    const feeData = await estimateFeeData(provider)  
-    
-
-    // hard conded values to be calculated
-    const txData = {  
-      to: cloneFactoryAddress.toLowerCase() ,
-      from: signer.address, 
-      nonce: ethers.BigNumber.from(nonce).toHexString() ,
-      data : cloneData.data ,
-      gasLimit : gasLimit.toHexString(), 
-      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas.toHexString(), 
-      maxFeePerGas: feeData.maxFeePerGas.toHexString(),
-      type: '0x02'
-    }   
-        
-    // Generate Transaction 
-    const tx = FeeMarketEIP1559Transaction.fromTxData(txData, { common })   
-
-    const privateKey = Buffer.from(
-      priKey,
-      'hex'
-    ) 
-    
-    // Sign Transaction 
-    const signedTx = tx.sign(privateKey)
-
-    // Send the transaction
-    const contractTransaction = await provider.sendTransaction(
-      "0x" + signedTx.serialize().toString("hex")
-    );      
-
-    const cloneEventData = await decodeCloneEvent(contractTransaction,cloneFactory)
-
-  
-    return {cloneEventData,contractTransaction}
-
-  }
-
-
-
-
-
-
-  
-}  
 
 
  

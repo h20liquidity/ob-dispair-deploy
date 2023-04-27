@@ -98,6 +98,7 @@ export const verify = async (
         
        } catch (error) {
             console.log("Verification Failed")
+            console.log(`--------------------------------------------`)
        }
         
         
