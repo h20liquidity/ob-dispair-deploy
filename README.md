@@ -2,12 +2,12 @@
 
 
 ### Goal
-- Deploy Rain Protocol address to new networks. 
+- Deploy Rain Protocol contracts to new networks. 
 
-#### Setup Emvironment 
-- Create a .env file in the **root of the project** and populate it with following feilds : 
+#### Setup Environment 
+- Create a .env file in the **root of the project** and populate it with following fields : 
 ```
-DEPLOYMENT_KEY=<priavte-key-of-the-wallet>
+DEPLOYMENT_KEY=<private-key-of-the-wallet>
 
 ALCHEMY_KEY_MUMBAI=
 ALCHEMY_KEY_POLYGON=
